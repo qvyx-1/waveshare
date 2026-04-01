@@ -98,7 +98,7 @@ class Display:
         except ImportError:
             LCD_SCK, LCD_SDA0 = 40, 46
 
-        self._spi = machine.SPI(1, baudrate=10_000_000, polarity=0, phase=0,
+        self._spi = machine.SPI(1, baudrate=40_000_000, polarity=0, phase=0,
                                 bits=8, firstbit=machine.SPI.MSB,
                                 sck=machine.Pin(LCD_SCK), mosi=machine.Pin(LCD_SDA0))
 
@@ -314,6 +314,26 @@ class Display:
         self._cs.value(0)
         self._spi.write(b'\x02\x00\x2C\x00')
         self._spi.write(self.buffer)
+        self._cs.value(1)
+
+    def show_region(self, x, y, w, h):
+        """Kopiert nur einen Teilbereich des Framebuffers zum Display (Partial Update)."""
+        if x < 0 or y < 0 or (x + w) > self.width or (y + h) > self.height:
+            return
+            
+        self._set_window(x, y, x + w - 1, y + h - 1)
+        self._cs.value(0)
+        self._spi.write(b'\x02\x00\x2C\x00')
+        
+        # Jede Zeile des Teilbereichs einzeln übertragen (da Framebuf row-major ist)
+        pitch = self.width * 2
+        offset = y * pitch + x * 2
+        line_len = w * 2
+        
+        for _ in range(h):
+            self._spi.write(self.buffer[offset : offset + line_len])
+            offset += pitch
+            
         self._cs.value(1)
 
     # --- Wrapper Methoden für Framebuf ---

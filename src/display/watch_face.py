@@ -28,7 +28,7 @@ class WatchFace:
     COLOR_TEXT     = 0xFFFF # Weiß
     COLOR_SECOND   = 0x00F8 # Rot
     COLOR_MINUTE   = 0xFFFF # Weiß
-    COLOR_HOUR     = 0xADE3 # Gold
+    COLOR_HOUR     = 0x8DA0 # Gold
     COLOR_TICK     = 0x0842 # Graue Markierungen
     COLOR_DIM      = 0x0421 # Dunkel
 
@@ -176,6 +176,36 @@ class WatchFace:
         
         # Display aktualisieren (Framebuffer senden)
         self.display.show()
+
+    def animate_boot_screen(self):
+        """High-FPS Boot Animation via Partial Updates (IMU)."""
+        d = self.display
+        try:
+            # Beschleunigung auslesen
+            ax, ay, az = self.imu.accel()
+            
+            # Offset berechnen (Dynamisch: +/- 120 Pixel)
+            # 90° kalibriertes Mapping + Invertierte X-Achse + Max-Skalierung
+            off_x = int(-ay * 120)
+            off_y = int(ax * 120)
+            
+            # Fenster-Koordinaten (Zentrum 180, 230)
+            # Fenster vergrößert für 120px Ausschlag (wx=180-70=110 -> wx=180-130=50)
+            wx, wy, ww, wh = 50, 100, 260, 260
+            
+            # Nur das Fenster im Puffer löschen
+            d.fill_rect(wx, wy, ww, wh, 0x0000)
+
+            # Reaktor an neuer Position zeichnen
+            cx, cy = 180 + off_x, 230 + off_y
+            d.circle(cx, cy, 20, self.display.CYAN, filled=True)
+            d.circle(cx, cy, 14, self.display.WHITE, filled=True)
+            d.circle(cx, cy,  8, self.display.CYAN, filled=True)
+
+            # Turbo-Update: Nur dieses Fenster zum Display schicken
+            d.show_region(wx, wy, ww, wh)
+        except:
+            pass
 
     def update(self):
         """Watch-Face aktualisieren (jede Sekunde)."""

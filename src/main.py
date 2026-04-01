@@ -105,8 +105,10 @@ def run_watch(display, rtc, imu, btn_boot):
                 face.update()
                 state = STATE_WATCH_FACE
             else:
-                # Schone CPU während wir auf Button warten
-                time.sleep_ms(50)
+                # High-FPS Floating Arc Reactor Animation
+                # (Nutzt Partial Updates für maximale Performance)
+                face.animate_boot_screen()
+                time.sleep_ms(1) # Nur ein minimales Delay, um Button-Hintergrundprozessen Zeit zu geben
                 
         elif state == STATE_WATCH_FACE:
             # Display-Update (jede Sekunde)
