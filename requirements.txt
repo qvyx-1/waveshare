@@ -1,0 +1,20 @@
+# requirements.txt — Host-System Entwickler-Dependencies
+# Waveshare SuperHero Watch Projekt
+#
+# Installation: pip install -r requirements.txt
+
+# Pflicht: Board-Kommunikation & Firmware-Flash
+esptool>=4.0.0
+mpremote>=0.6.0
+
+# Empfohlen: MicroPython Code zu .mpy kompilieren (schnelleres Laden)
+# mpy-cross  # Manuelle Installation von Espressif nötig
+
+# Entwicklung: Alternativer File-Manager
+rshell>=0.0.31
+
+# Optional: MicroPython IDE
+# thonny  # Separate Installation empfohlen
+
+# Serial-Port Diagnose
+pyserial>=3.5
