@@ -21,16 +21,16 @@ class WatchFace:
     CY = 180
     R  = 168  # Nutzradius (etwas kleiner als Display-Rand)
 
-    # Farben (RGB565)
-    COLOR_BG       = 0x0000   # Schwarz
-    COLOR_RING     = 0xF800   # Rot (Iron Man)
-    COLOR_ACCENT   = 0xFFE0   # Gold
-    COLOR_TEXT     = 0xFFFF   # Weiß
-    COLOR_SECOND   = 0xF800   # Rot (Sekundenzeiger)
-    COLOR_MINUTE   = 0xFFFF   # Weiß (Minutenzeiger)
-    COLOR_HOUR     = 0xFFE0   # Gold (Stundenzeiger)
-    COLOR_TICK     = 0x4208   # Dunkelgrau (Markierungen)
-    COLOR_DIM      = 0x2104   # Sehr dunkel
+    # Farben (Dynamisch via color565 generiert)
+    COLOR_BG       = 0x0000 
+    COLOR_RING     = 0x00F8 # Rot
+    COLOR_ACCENT   = 0x0EFF # Gold
+    COLOR_TEXT     = 0xFFFF # Weiß
+    COLOR_SECOND   = 0x00F8 # Rot
+    COLOR_MINUTE   = 0xFFFF # Weiß
+    COLOR_HOUR     = 0xADE3 # Gold
+    COLOR_TICK     = 0x0842 # Graue Markierungen
+    COLOR_DIM      = 0x0421 # Dunkel
 
     def __init__(self, display, rtc, imu, config):
         self.display = display
@@ -138,7 +138,7 @@ class WatchFace:
         time_str = f"{hour:02d}:{minute:02d}"
         # Zentriert (8px breite Zeichen × 5 Zeichen = 40px)
         x = self.CX - (len(time_str) * 4)
-        self.display.text(time_str, x, 200, self.COLOR_TEXT, size=1)
+        self.display.text(time_str, x, 200, self.COLOR_TEXT)
 
     def draw_date(self, day, month, weekday_str):
         """Datum oben anzeigen."""
@@ -158,21 +158,24 @@ class WatchFace:
         d.fill(0x0000)
 
         # Roter Ring
-        d.circle(180, 180, 170, 0xF800, filled=False)
-        d.circle(180, 180, 168, 0xFFE0, filled=False)
+        d.circle(180, 180, 170, self.display.RED, filled=False) 
+        d.circle(180, 180, 168, self.display.YELLOW, filled=False) 
 
         # Goldenes "SW" (SuperHero Watch)
-        d.text("SUPERHERO", 118, 155, 0xFFE0)
-        d.text("  WATCH  ", 130, 168, 0xF800)
-        d.text("IRON EDITION", 110, 195, 0x4208)
+        d.text("SUPERHERO", 118, 155, self.display.YELLOW)
+        d.text("  WATCH  ", 130, 168, self.display.RED)
+        d.text("IRON EDITION", 110, 195, self.display.RED)
 
         # Kleiner Arc-Reaktor in der Mitte
-        d.circle(180, 230, 20, 0x07FF, filled=True)   # Cyan
-        d.circle(180, 230, 14, 0xFFFF, filled=True)   # Weiß
-        d.circle(180, 230, 8,  0x07FF, filled=True)   # Cyan
+        d.circle(180, 230, 20, self.display.CYAN, filled=True)
+        d.circle(180, 230, 14, self.display.WHITE, filled=True)
+        d.circle(180, 230,  8, self.display.CYAN, filled=True)
 
-        time_mod = __import__('time')
-        time_mod.sleep_ms(2000)
+        # Handlungsanweisung für Button
+        d.text("PRESS [BOOT] TO START", 95, 290, self.display.WHITE)
+        
+        # Display aktualisieren (Framebuffer senden)
+        self.display.show()
 
     def update(self):
         """Watch-Face aktualisieren (jede Sekunde)."""
@@ -211,3 +214,6 @@ class WatchFace:
             pass
 
         self._tick += 1
+        
+        # Framebuffer final an Display pushen
+        self.display.show()

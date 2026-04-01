@@ -14,7 +14,7 @@ def startup_banner():
     print("  ╔══════════════════════════════╗")
     print("  ║   ⚡ SUPERHERO WATCH ⚡      ║")
     print("  ║   Waveshare ESP32-S3-LCD     ║")
-    print(f"  ║   {config.HERO_NAME:<26s}  ║")
+    print(f"  ║   {config.WATCH_NAME:<26s}  ║")
     print("  ╚══════════════════════════════╝")
     print()
 
@@ -25,22 +25,24 @@ def init_hardware():
     from sensors.imu import IMU
     from display.driver import Display
 
-    print("[INIT] Display...")
-    display = Display()
-    display.init()
-    display.backlight(config.BL_DEFAULT_DUTY)
-    print("[INIT] Display OK ✓")
-
     print("[INIT] I2C Bus...")
     i2c = machine.I2C(0,
                        sda=machine.Pin(config.I2C_SDA),
                        scl=machine.Pin(config.I2C_SCL),
-                       freq=config.I2C_FREQ)
+                       freq=400_000)
 
     # I2C-Geräte scannen
     devices = i2c.scan()
     hex_devs = [hex(d) for d in devices]
     print(f"[INIT] I2C Geräte: {hex_devs}")
+
+    print("[INIT] Display...")
+    # WICHTIG: I2C-Bus explizit mitgeben, damit der TCA9554-GPIO-Expander für
+    # den Hardware-Reset des Displays ordentlich angesprochen werden kann!
+    display = Display(i2c=i2c)
+    display.init()
+    display.backlight(config.BL_BRIGHTNESS)
+    print("[INIT] Display OK ✓")
 
     print("[INIT] RTC...")
     rtc = RTC(i2c)
@@ -56,40 +58,88 @@ def init_hardware():
     return display, i2c, rtc, imu
 
 
-def run_watch(display, rtc, imu):
-    """Haupt-Watch-Loop."""
+# Zustände für die State-Machine
+STATE_BOOT_SCREEN = 0
+STATE_WATCH_FACE  = 1
+
+def run_watch(display, rtc, imu, btn_boot):
+    """Haupt-Watch-Loop mit State-Machine."""
     from display.watch_face import WatchFace
 
     face = WatchFace(display, rtc, imu, config)
+    
+    print("[WATCH] Zeige Boot Screen...")
     face.draw_boot_screen()
 
-    print("[WATCH] Starte SuperHero Watch Loop...")
-
+    print("[WATCH] Warte auf BOOT Button...")
+    
+    state = STATE_BOOT_SCREEN
     last_update = 0
     tick = 0
 
+    # Button Debouncing Variablen
+    btn_last_state = 1
+    btn_last_press_time = 0
+
     while True:
         now = time.ticks_ms()
+        
+        # --- BUTTON DEBOUNCING LOGIK ---
+        btn_state = btn_boot.value()
+        btn_pressed = False
+        
+        # Flankenerkennung: Wechsel von High (1) auf Low (0) = Gedrückt
+        if btn_state == 0 and btn_last_state == 1:
+            if time.ticks_diff(now, btn_last_press_time) > 250: # 250ms Entprellung
+                btn_pressed = True
+                btn_last_press_time = now
+        btn_last_state = btn_state
 
-        # Display-Update (jede Sekunde)
-        if time.ticks_diff(now, last_update) >= 1000:
-            face.update()
-            last_update = now
-            tick += 1
+        # --- STATE MACHINE ---
+        if state == STATE_BOOT_SCREEN:
+            if btn_pressed:
+                print("[WATCH] BOOT Button gedrückt -> Wechsele zum Ziffernblatt!")
+                # Vorbereitung für Watch Face
+                face._last_dt = None # Erzwinge komplettes Redraw
+                face.draw_background()
+                face.update()
+                state = STATE_WATCH_FACE
+            else:
+                # Schone CPU während wir auf Button warten
+                time.sleep_ms(50)
+                
+        elif state == STATE_WATCH_FACE:
+            # Display-Update (jede Sekunde)
+            if time.ticks_diff(now, last_update) >= 1000:
+                face.update()
+                last_update = now
+                tick += 1
 
-        # GC alle 60 Sekunden
-        if tick % 60 == 0 and tick > 0:
-            gc.collect()
+            # GC alle 60 Sekunden
+            if tick % 60 == 0 and tick > 0:
+                gc.collect()
 
-        time.sleep_ms(50)
+            # Zukünftig: Hier können Button-Eingaben für Menüs im Watch-State verarbeitet werden
+            if btn_pressed:
+                print("[WATCH] Knopf im Uhr-Modus gedrückt!")
+                # Beispiel: Animation, App-Wechsel etc.
+
+            time.sleep_ms(50)
 
 
 def main():
     startup_banner()
 
     try:
+        # Initialisiere Hardware und Buttons
         display, i2c, rtc, imu = init_hardware()
-        run_watch(display, rtc, imu)
+        
+        # BOOT Button (GPIO 0, internes Pull-up oft physikalisch schon vorhanden, PULL_UP sicherheitshalber aktivieren)
+        btn_boot = machine.Pin(config.BTN_BOOT, machine.Pin.IN, machine.Pin.PULL_UP)
+        print("[INIT] BOOT-Button auf GPIO 0 initialisiert.")
+        
+        # Starte State-Machine
+        run_watch(display, rtc, imu, btn_boot)
 
     except KeyboardInterrupt:
         print("\n[WATCH] Gestoppt (Ctrl+C)")

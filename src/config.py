@@ -1,98 +1,107 @@
 # Zentrale Konfiguration — SuperHero Watch
 # Waveshare ESP32-S3-LCD-1.85
+# PINS VERIFIZIERT gegen offizielle Waveshare Wiki Dokumentation
 
 # ============================================================
-# DISPLAY PINS (ST7701 — SPI)
+# DISPLAY PINS (ST77916 — QSPI, 4 Datenleitungen)
 # ============================================================
-LCD_CS   = 12    # Chip-Select (aktiv LOW)
-LCD_CLK  = 13    # SPI Clock
-LCD_MOSI = 11    # MOSI / SPI Data Out
-LCD_MISO = 14    # MISO (für SD-Karte)
-LCD_DC   = 4     # Data/Command
-LCD_RST  = 5     # Reset (aktiv LOW)
-LCD_BL   = 38    # Backlight (PWM)
-LCD_W    = 360   # Display-Breite (Pixel)
-LCD_H    = 360   # Display-Höhe (Pixel)
+LCD_SDA0 = 46   # QSPI Datenleitung 0 (MOSI)
+LCD_SDA1 = 45   # QSPI Datenleitung 1
+LCD_SDA2 = 42   # QSPI Datenleitung 2
+LCD_SDA3 = 41   # QSPI Datenleitung 3
+LCD_SCK  = 40   # QSPI Clock
+LCD_CS   = 21   # Chip Select
+LCD_BL   = 5    # Backlight (PWM)
+# LCD_RST  = EXIO2 — gesteuert über TCA9554 GPIO-Expander!
+# LCD_TE   = GPIO18 (Tearing Effect)
+
+LCD_W    = 360  # Display-Breite
+LCD_H    = 360  # Display-Höhe
 
 # ============================================================
-# I2C BUS (IMU + RTC + GPIO-Expander)
+# I2C BUS (IMU + RTC + TCA9554 GPIO-Expander)
 # ============================================================
-I2C_SDA  = 6
-I2C_SCL  = 7
-I2C_FREQ = 400_000  # 400kHz Fast Mode
-
-# I2C Adressen
-QMI8658_ADDR  = 0x6B   # IMU / 6-Achsen-Sensor
-PCF85063_ADDR = 0x51   # RTC Echtzeituhr
-TCA9554_ADDR  = 0x20   # GPIO-Expander
-IMU_INT_PIN   = 8      # IMU Interrupt
+I2C_SCL  = 10   # I2C Clock (ACHTUNG: nur I2C, kein GPIO!)
+I2C_SDA  = 11   # I2C Data  (ACHTUNG: nur I2C, kein GPIO!)
 
 # ============================================================
-# TF-KARTE (SPI — shared bus mit Display)
+# GPIO-Expander TCA9554 (I2C Adresse 0x20)
+# Steuert EXIO0..EXIO7
 # ============================================================
-SD_CS    = 15
+TCA9554_ADDR = 0x20
+EXIO0 = 0  # Bit 0
+EXIO1 = 1  # Bit 1
+EXIO2 = 2  # LCD_RST
+EXIO3 = 3  # TF-Card CS (SD_D3/CS)
+EXIO4 = 4  # IMU_INT2
+EXIO5 = 5  # IMU_INT1
 
 # ============================================================
-# AUDIO DAC: PCM5101 (I2S Ausgang)
+# QMI8658 IMU (I2C — shared Bus mit RTC)
 # ============================================================
-I2S_BCLK = 17
-I2S_WS   = 18
-I2S_DOUT = 16
+IMU_SCL  = 10   # = I2C_SCL
+IMU_SDA  = 11   # = I2C_SDA
+IMU_ADDR = 0x6B
 
 # ============================================================
-# MIKROFON (I2S Eingang)
+# PCF85063 RTC (I2C — shared Bus)
 # ============================================================
-MIC_BCLK = 39
-MIC_WS   = 40
-MIC_DATA = 41
+RTC_SCL  = 10   # = I2C_SCL
+RTC_SDA  = 11   # = I2C_SDA
+RTC_INT  = 9    # Interrupt-Pin
+RTC_ADDR = 0x51
+
+# ============================================================
+# TF-CARD (SPI)
+# ============================================================
+SD_MISO  = 16   # SD_D0
+SD_MOSI  = 17   # SD_CMD
+SD_SCK   = 14   # SD_SCK
+# SD_CS   = EXIO3 (via TCA9554!)
+
+# ============================================================
+# AUDIO PCM5101 (I2S)
+# ============================================================
+SPEAK_DIN  = 47  # I2S Data
+SPEAK_LRCK = 38  # I2S Word Select / LRCK
+SPEAK_BCK  = 48  # I2S Bit Clock
+
+# ============================================================
+# MICROPHONE (I2S)
+# ============================================================
+MIC_WS  = 2    # Word Select
+MIC_SCK = 15   # Bit Clock
+MIC_SD  = 39   # Data
+
+# ============================================================
+# TOUCHSCREEN CST816S (I2C 0x15)
+# ACHTUNG: Nutzt einen separaten I2C-Bus!
+# ============================================================
+TOUCH_SCL = 3
+TOUCH_SDA = 1
+TOUCH_INT = 4
 
 # ============================================================
 # BUTTONS
 # ============================================================
-BOOT_BTN  = 0    # BOOT / User-Button
-POWER_BTN = 21   # Power-Key
+BTN_BOOT  = 0   # BOOT-Taste
+BTN_POWER = None # Power über TCA9554 (EXIO?)
+LCD_TE    = 18   # Tearing Effect
 
 # ============================================================
-# SUPERHERO WATCH KONFIGURATION
+# WIFI (optional — in secrets.py ablegen!)
 # ============================================================
+try:
+    from secrets import WIFI_SSID, WIFI_PASSWORD
+except ImportError:
+    WIFI_SSID     = ""
+    WIFI_PASSWORD = ""
+WIFI_TIMEOUT = 15
 
-# Watch Face Einstellungen
-WATCH_FACE_BG_COLOR   = 0x0000   # Hintergrundfarbe (16-bit RGB565) — Schwarz
-WATCH_FACE_ACCENT     = 0x07E0   # Akzentfarbe — Grün (Superhelden-Style)
-WATCH_FACE_TEXT_COLOR = 0xFFFF   # Textfarbe — Weiß
-
-# Superhelden-Thema: "IRON WATCH"
-HERO_NAME    = "IRON WATCH"
-HERO_COLOR   = 0xF800   # Rot (Iron Man Style)
-HERO_ACCENT  = 0xFFE0   # Gold
-
-# Backlight
-BL_DEFAULT_DUTY = 512   # PWM 0-1023 (50%)
-BL_MIN_DUTY     = 50
-BL_MAX_DUTY     = 1023
-BL_DIM_DUTY     = 100   # Nach Inaktivität
-
-# Energie-Management
-SLEEP_AFTER_SEC   = 30  # Sekunden bis Display abdimmt
-DEEPSLEEP_AFTER_S = 300 # Sekunden bis Deep Sleep
-
-# WiFi (Optional — über Gadgets)
-WIFI_SSID     = ""      # In secrets.py definieren!
-WIFI_PASSWORD = ""      # In secrets.py definieren!
-WIFI_TIMEOUT  = 10      # Sekunden
-
-# NTP Zeit-Synchronisierung
-NTP_HOST   = "pool.ntp.org"
-TIMEZONE_OFFSET = 2     # UTC+2 (CEST) — anpassen!
-
-# Gadget-System
-GADGETS_ENABLED = [
-    "clock",     # Immer aktiv
-    "compass",   # QMI8658-basiert
-    "steps",     # Schrittzähler
-    # "weather", # Benötigt WiFi — aktivieren wenn konfiguriert
-]
-
-# Audio
-AUDIO_ENABLED = True
-AUDIO_VOLUME  = 50   # 0-100%
+# ============================================================
+# WATCH EINSTELLUNGEN
+# ============================================================
+WATCH_NAME   = "SuperHero Watch"
+WATCH_EDITION = "Iron Edition"
+CPU_FREQ_MHZ = 240
+BL_BRIGHTNESS = 512  # 0-1023 (50%)

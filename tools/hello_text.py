@@ -1,28 +1,14 @@
-# hello_display.py — Hello World für Waveshare ESP32-S3-LCD-1.85
-# Display: ST77916, QSPI Interface (4 Datenleitungen)
-# ECHTE PINS aus Waveshare Wiki:
-#   LCD_SDA0=GPIO46, LCD_SDA1=GPIO45, LCD_SDA2=GPIO42, LCD_SDA3=GPIO41
-#   LCD_SCK=GPIO40,  LCD_CS=GPIO21
-#   LCD_RST=EXIO2 (via TCA9554 GPIO-Expander, I2C 0x20)
-#   LCD_BL=GPIO5
-#   I2C: SCL=GPIO10, SDA=GPIO11
-
 import machine
 import time
 import struct
+import framebuf
 
-print("=== Hello World Display (ST77916 QSPI - Fix) ===")
+print("=== Hello Text Display ===")
 
-# ——— Konfiguration ———
-PIN_BL   = 5    # Backlight
-PIN_SCK  = 40   # QSPI Clock
-PIN_CS   = 21   # Chip Select
-PIN_D0   = 46   # Datenleitung 0
-PIN_D1   = 45   # Datenleitung 1
-PIN_D2   = 42   # Datenleitung 2
-PIN_D3   = 41   # Datenleitung 3
-
-# I2C für GPIO-Expander
+PIN_BL   = 5
+PIN_SCK  = 40
+PIN_CS   = 21
+PIN_D0   = 46
 PIN_SCL  = 10
 PIN_SDA  = 11
 TCA_ADDR = 0x20
@@ -33,27 +19,20 @@ H = 360
 bl_pin = machine.Pin(PIN_BL, machine.Pin.OUT)
 bl_pin.value(1)
 
-# I2C und Reset
 i2c = machine.I2C(0, scl=machine.Pin(PIN_SCL), sda=machine.Pin(PIN_SDA), freq=400_000)
 devs = i2c.scan()
 if TCA_ADDR in devs:
     i2c.writeto_mem(TCA_ADDR, 0x03, bytes([0x00]))
     i2c.writeto_mem(TCA_ADDR, 0x01, bytes([0xFF]))
     time.sleep_ms(10)
-    i2c.writeto_mem(TCA_ADDR, 0x01, bytes([0xFF & ~(1<<2)]))  # RST LOW
+    i2c.writeto_mem(TCA_ADDR, 0x01, bytes([0xFF & ~(1<<2)]))
     time.sleep_ms(50)
-    i2c.writeto_mem(TCA_ADDR, 0x01, bytes([0xFF]))             # RST HIGH
+    i2c.writeto_mem(TCA_ADDR, 0x01, bytes([0xFF]))
     time.sleep_ms(120)
 
 cs  = machine.Pin(PIN_CS, machine.Pin.OUT, value=1)
-spi = machine.SPI(1,
-                  baudrate=10_000_000,
-                  polarity=0,
-                  phase=0,
-                  bits=8,
-                  firstbit=machine.SPI.MSB,
-                  sck=machine.Pin(PIN_SCK),
-                  mosi=machine.Pin(PIN_D0))
+spi = machine.SPI(1, baudrate=20_000_000, polarity=0, phase=0, bits=8, firstbit=machine.SPI.MSB,
+                  sck=machine.Pin(PIN_SCK), mosi=machine.Pin(PIN_D0))
 
 def spi_write(data):
     cs.value(0)
@@ -61,7 +40,6 @@ def spi_write(data):
     cs.value(1)
 
 def cmd(c, *args):
-    # 0x02 = QSPI 1-1-1 Write Kommando! (Instruktion=1-wire, Adresse=1-wire, Daten=1-wire)
     buf = bytearray([0x02, 0x00, c, 0x00])
     for a in args:
         buf.append(a)
@@ -251,62 +229,75 @@ def init_st77916():
     cmd(0xD9, 0xAA)
     cmd(0xF3, 0x01)
     cmd(0xF0, 0x00)
-    cmd(0x21, 0x00)
+    cmd(0x21, 0x00) # Invert ON
     cmd(0x11, 0x00)
     time.sleep_ms(120)
     cmd(0x29, 0x00)
+    time.sleep_ms(20)
 
 def set_window(x0, y0, x1, y1):
     cmd(0x2A, x0>>8, x0&0xFF, x1>>8, x1&0xFF)
     cmd(0x2B, y0>>8, y0&0xFF, y1>>8, y1&0xFF)
 
-def fill_color(color):
+print("Allocating 259KB Framebuffer in PSRAM...")
+# Allocate in SPIRAM
+buf = bytearray(W * H * 2)
+fb = framebuf.FrameBuffer(buf, W, H, framebuf.RGB565)
+
+def color565(r, g, b):
+    # RGB565 requires big endian for framebuf if spi expects MSB
+    # Wait, framebuf.RGB565 stores color as (r & 0xf8) << 8 | (g & 0xfc) << 3 | b >> 3
+    # It stores it little-endian in memory! 
+    # ST77916 expects MSB first across SPI. So we'll have to swap bytes!
+    c = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
+    # Return swapped for Framebuf so when it writes little-endian to our bytearray,
+    # the MSB becomes the first byte in memory.
+    return (c >> 8) | ((c & 0xFF) << 8)
+
+def show():
     set_window(0, 0, W-1, H-1)
-    hi = color >> 8
-    lo = color & 0xFF
-    chunk_size = 512
-    chunk = bytearray([hi, lo] * chunk_size)
-    total = W * H
     cs.value(0)
-    
-    # 0x02 = 1-1-1 Write Cmd
-    # Das ist extrem wichtig: Wenn wir hier 0x32 senden, wuerde das Display den Data Payload auf D0-D3 erwarten (Quad SPI).
-    # Da wir nur D0 bedienen, wuerden 75% der Daten als Noise (floating) gelesen werden! 
-    # = Eine mehrfarbige gestreifte Linie. 
     spi.write(b'\x02\x00\x2C\x00')
-    
-    for _ in range(total // chunk_size):
-        spi.write(chunk)
-    rest = total % chunk_size
-    if rest:
-        spi.write(bytearray([hi, lo] * rest))
+    spi.write(buf)
     cs.value(1)
 
 try:
     init_st77916()
 
-    while True:
-        print("ROT...")
-        fill_color(0xF800)
-        time.sleep(2)
-
-        print("GRUEN...")
-        fill_color(0x07E0)
-        time.sleep(2)
-
-        print("BLAU...")
-        fill_color(0x001F)
-        time.sleep(2)
-
-        print("WEISS...")
-        fill_color(0xFFFF)
-        time.sleep(2)
-
-        print("SCHWARZ...")
-        fill_color(0x0000)
-        time.sleep(2)
+    print("Drawing Hello World Image...")
+    
+    # Background: BLACK
+    fb.fill(color565(0, 0, 0))
+    
+    # Draw a RED circle representing the watch face
+    fb.ellipse(180, 180, 175, 175, color565(255, 0, 0), False)
+    fb.ellipse(180, 180, 174, 174, color565(255, 0, 0), False)
+    
+    # Draw an inner BLUE circle
+    fb.ellipse(180, 180, 160, 160, color565(0, 0, 255), False)
+    
+    # Draw typical Watch Marks
+    for r in range(0, 360, 30):
+        # We don't have math/trig directly here for lines smoothly, just 
+        pass
+        
+    # Draw Text
+    fb.text("HELLO", 160, 150, color565(255, 255, 255))
+    fb.text("SUPERHERO", 144, 170, color565(255, 255, 0))
+    fb.text("WATCH", 160, 190, color565(255, 255, 255))
+    
+    fb.text("Waveshare ST77916", 110, 260, color565(0, 255, 0))
+    fb.text("MicroPython PSRAM", 110, 280, color565(0, 255, 0))
+    
+    # Draw a rectangle
+    fb.rect(130, 205, 100, 2, color565(255, 0, 255))
+    
+    print("Flushing to Display...")
+    show()
+    print("Fertig!")
 
 except Exception as e:
     import sys
     print(f"\n❌ Fehler: {e}")
     sys.print_exception(e)
+
