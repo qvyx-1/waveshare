@@ -177,7 +177,7 @@ class WatchFace:
         # Display aktualisieren (Framebuffer senden)
         self.display.show()
 
-    def animate_boot_screen(self):
+    def animate_boot_screen(self, audio=None):
         """High-FPS Boot Animation via Partial Updates (IMU)."""
         d = self.display
         try:
@@ -189,6 +189,19 @@ class WatchFace:
             off_x = int(-ay * 120)
             off_y = int(ax * 120)
             
+            # --- Dynamisches Audio ---
+            if audio:
+                # Distanz zur Mitte berechnen (0.0 bis ca. 1.4)
+                dist = math.sqrt(ax**2 + ay**2)
+                # Lautstärke skalieren (0.0 bis 0.6)
+                vol = min(0.6, dist * 0.8)
+                # Weicher Sound-Schnipsel mit Amplituden-Gleiten
+                buf = audio.get_gliding_buffer(freq=200, new_vol=vol, num_samples=1024)
+                try:
+                    audio.i2s.write(buf)
+                except:
+                    pass
+
             # Fenster-Koordinaten (Zentrum 180, 230)
             # Fenster vergrößert für 120px Ausschlag (wx=180-70=110 -> wx=180-130=50)
             wx, wy, ww, wh = 50, 100, 260, 260
@@ -204,8 +217,8 @@ class WatchFace:
 
             # Turbo-Update: Nur dieses Fenster zum Display schicken
             d.show_region(wx, wy, ww, wh)
-        except:
-            pass
+        except Exception as e:
+            print(f"[FACE] Animation Error: {e}")
 
     def update(self):
         """Watch-Face aktualisieren (jede Sekunde)."""

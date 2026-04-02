@@ -62,7 +62,7 @@ def init_hardware():
 STATE_BOOT_SCREEN = 0
 STATE_WATCH_FACE  = 1
 
-def run_watch(display, rtc, imu, btn_boot):
+def run_watch(display, rtc, imu, btn_boot, audio=None):
     """Haupt-Watch-Loop mit State-Machine."""
     from display.watch_face import WatchFace
 
@@ -105,10 +105,9 @@ def run_watch(display, rtc, imu, btn_boot):
                 face.update()
                 state = STATE_WATCH_FACE
             else:
-                # High-FPS Floating Arc Reactor Animation
-                # (Nutzt Partial Updates für maximale Performance)
-                face.animate_boot_screen()
-                time.sleep_ms(1) # Nur ein minimales Delay, um Button-Hintergrundprozessen Zeit zu geben
+                # High-FPS Floating Arc Reactor Animation mit dynamischem Sound
+                face.animate_boot_screen(audio=audio)
+                time.sleep_ms(1) 
                 
         elif state == STATE_WATCH_FACE:
             # Display-Update (jede Sekunde)
@@ -130,18 +129,27 @@ def run_watch(display, rtc, imu, btn_boot):
 
 
 def main():
+    from audio.driver import Audio
     startup_banner()
 
     try:
         # Initialisiere Hardware und Buttons
         display, i2c, rtc, imu = init_hardware()
         
+        # Startup Ping (0.1s Jarvis Beep)
+        try:
+            audio = Audio(rate=44100, i2c=i2c)
+            audio.play_sine(freq=880, duration_ms=100, volume=0.5)
+            #audio.deinit()
+        except Exception as e:
+            print(f"[AUDIO] Startup-Ping fehlgeschlagen: {e}")
+        
         # BOOT Button (GPIO 0, internes Pull-up oft physikalisch schon vorhanden, PULL_UP sicherheitshalber aktivieren)
         btn_boot = machine.Pin(config.BTN_BOOT, machine.Pin.IN, machine.Pin.PULL_UP)
         print("[INIT] BOOT-Button auf GPIO 0 initialisiert.")
         
-        # Starte State-Machine
-        run_watch(display, rtc, imu, btn_boot)
+        # Starte State-Machine (jetzt mit Audio-Pass-through)
+        run_watch(display, rtc, imu, btn_boot, audio=audio)
 
     except KeyboardInterrupt:
         print("\n[WATCH] Gestoppt (Ctrl+C)")
