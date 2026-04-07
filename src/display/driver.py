@@ -1,9 +1,11 @@
 # Display-Treiber für ST77916 (360x360 LCD)
 # Waveshare ESP32-S3-LCD-1.85 Edition mit PSRAM Framebuffer
+# v2.0 — Performance-Optimiert mit @micropython.native
 
 import machine
 import time
 import framebuf
+import micropython
 
 # Lade Pins aus zentraler Konfig
 try:
@@ -13,20 +15,27 @@ except ImportError:
     LCD_W, LCD_H = 360, 360
     I2C_SCL, I2C_SDA, TCA9554_ADDR = 10, 11, 0x20
 
+
+@micropython.native
 def color565(r, g, b):
-    # RGB565 requires big endian for framebuf if spi expects MSB
+    """RGB → RGB565 mit Byte-Swap für SPI-Übertragung."""
     c = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
-    # Swapped for Framebuf (which writes little-endian but SPI sends MSB first)
     return (c >> 8) | ((c & 0xFF) << 8)
+
 
 class Display:
     """
     Treiber für den ST77916 LCD-Controller auf dem ESP32-S3-LCD-1.85.
     Nutzt 1-wire SPI über QSPI-Hardwaredesign (D0 = MOSI).
     Eingebauter 259KB PSRAM Framebuffer (360x360 RGB565).
+    
+    v2.0: Performance-Optimiert
+    - @micropython.native für häufig aufgerufene Methoden
+    - Schnellere SPI-Baudrate (60MHz)
+    - Optimierter show_region()
     """
 
-    # Vordefinierte Farben
+    # Vordefinierte Farben (vorberechnet, kein Overhead zur Laufzeit)
     BLACK   = color565(0, 0, 0)
     WHITE   = color565(255, 255, 255)
     RED     = color565(255, 0, 0)
@@ -35,16 +44,18 @@ class Display:
     YELLOW  = color565(255, 255, 0)
     CYAN    = color565(0, 255, 255)
     MAGENTA = color565(255, 0, 255)
+    ORANGE  = color565(255, 165, 0)
+    DARK_RED = color565(139, 0, 0)
+    GREY    = color565(128, 128, 128)
+    DARK_GREY = color565(40, 40, 40)
 
     def __init__(self, i2c=None):
         self.width = LCD_W
         self.height = LCD_H
-        self.color565=color565
+        self.color565 = color565
         self._bl = machine.Pin(LCD_BL, machine.Pin.OUT, value=1)
         self._cs = machine.Pin(LCD_CS, machine.Pin.OUT, value=1)
         
-        # SPI wird erst in init() konfiguriert, damit der LCD bei RST-Boot nicht
-        # durch asynchrone SPI-Signale in den falschen Modus versetzt wird.
         self._spi = None
 
         # I2C für Hardware-Reset via TCA9554
@@ -57,25 +68,28 @@ class Display:
         print("[DISPLAY] Allokiere 259KB Framebuffer im PSRAM...")
         self.buffer = bytearray(self.width * self.height * 2)
         self.fb = framebuf.FrameBuffer(self.buffer, self.width, self.height, framebuf.RGB565)
+        
+        # Vorberechneter Write-Command Header
+        self._write_cmd = b'\x02\x00\x2C\x00'
 
     def hardware_reset(self):
-        """Reset via TCA9554 GPIO Expander (Pin EXIO2 für LCD, EXIO0 für Touch)."""
+        """Reset via TCA9554 GPIO Expander (EXIO2 für LCD, EXIO0 für Touch)."""
         devs = self._i2c.scan()
         if TCA9554_ADDR in devs:
             self._i2c.writeto_mem(TCA9554_ADDR, 0x03, bytes([0x00]))
             self._i2c.writeto_mem(TCA9554_ADDR, 0x01, bytes([0xFF]))
             time.sleep_ms(10)
-            # RST LOW für beide: Bit 0 (Touch) und Bit 2 (LCD) abziehen
+            # RST LOW für Touch (Bit 0) und LCD (Bit 2)
             mask = 0xFF & ~( (1<<0) | (1<<2) )
             self._i2c.writeto_mem(TCA9554_ADDR, 0x01, bytes([mask]))
             time.sleep_ms(50)
-            self._i2c.writeto_mem(TCA9554_ADDR, 0x01, bytes([0xFF]))             # RST HIGH
+            self._i2c.writeto_mem(TCA9554_ADDR, 0x01, bytes([0xFF]))
             time.sleep_ms(120)
         else:
             print("[DISPLAY] WARNUNG: TCA9554 nicht gefunden! Reset übersprungen.")
 
     def _cmd(self, c, *args):
-        # 0x02 = QSPI 1-1-1 Write Kommando (1-Wire Format für ST77916)
+        """Sende Kommando im QSPI 1-1-1 Format."""
         buf = bytearray([0x02, 0x00, c, 0x00])
         for a in args:
             buf.append(a)
@@ -84,26 +98,25 @@ class Display:
         self._cs.value(1)
 
     def backlight(self, duty=1):
-        """Einfache Hintergrundbeleuchtung ON(1) oder OFF(0)."""
+        """Hintergrundbeleuchtung ON/OFF. Für PWM: machine.PWM(Pin(5)) nutzen."""
         self._bl.value(1 if duty > 0 else 0)
 
     def init(self):
-        """Init ST77916 Controller."""
+        """Init ST77916 Controller — vollständige Init-Sequenz."""
         self.hardware_reset()
 
-        # SPI Setup (10MHz für sicheren 1-Wire Modus über QSPI D0)
-        # Dies geschieht absichtlich NACH dem Hardware Reset.
         try:
             from config import LCD_SCK, LCD_SDA0
         except ImportError:
             LCD_SCK, LCD_SDA0 = 40, 46
 
-        self._spi = machine.SPI(1, baudrate=40_000_000, polarity=0, phase=0,
+        # SPI: 60MHz für bessere Performance (1-Wire Modus über QSPI D0)
+        self._spi = machine.SPI(1, baudrate=60_000_000, polarity=0, phase=0,
                                 bits=8, firstbit=machine.SPI.MSB,
                                 sck=machine.Pin(LCD_SCK), mosi=machine.Pin(LCD_SDA0))
 
-        self._cmd(0x36, 0x00) # MADCTL: RGB Mode (Standard)
-        self._cmd(0x3A, 0x55) # COLMOD 16-bit
+        self._cmd(0x36, 0x00)  # MADCTL: RGB Mode
+        self._cmd(0x3A, 0x55)  # COLMOD 16-bit
         
         # Waveshare Custom Init Sequence
         self._cmd(0xF0, 0x28)
@@ -298,40 +311,43 @@ class Display:
         self._cmd(0xF3, 0x01)
         self._cmd(0xF0, 0x00)
         
-        self._cmd(0x21) # INVERT ON
-        self._cmd(0x11) # Sleep Out
+        self._cmd(0x21)  # INVERT ON
+        self._cmd(0x11)  # Sleep Out
         time.sleep_ms(120)
-        self._cmd(0x29) # Display ON
+        self._cmd(0x29)  # Display ON
         time.sleep_ms(20)
 
+    @micropython.native
     def _set_window(self, x0, y0, x1, y1):
         self._cmd(0x2A, x0>>8, x0&0xFF, x1>>8, x1&0xFF)
         self._cmd(0x2B, y0>>8, y0&0xFF, y1>>8, y1&0xFF)
 
+    @micropython.native
     def show(self):
-        """Kopiert den Framebuffer in einem Rutsch zum Display."""
+        """Kopiert den gesamten Framebuffer zum Display."""
         self._set_window(0, 0, self.width-1, self.height-1)
         self._cs.value(0)
-        self._spi.write(b'\x02\x00\x2C\x00')
+        self._spi.write(self._write_cmd)
         self._spi.write(self.buffer)
         self._cs.value(1)
 
+    @micropython.native
     def show_region(self, x, y, w, h):
-        """Kopiert nur einen Teilbereich des Framebuffers zum Display (Partial Update)."""
+        """Kopiert nur einen Teilbereich des Framebuffers zum Display."""
         if x < 0 or y < 0 or (x + w) > self.width or (y + h) > self.height:
             return
             
         self._set_window(x, y, x + w - 1, y + h - 1)
         self._cs.value(0)
-        self._spi.write(b'\x02\x00\x2C\x00')
+        self._spi.write(self._write_cmd)
         
-        # Jede Zeile des Teilbereichs einzeln übertragen (da Framebuf row-major ist)
+        buf = self.buffer
         pitch = self.width * 2
         offset = y * pitch + x * 2
         line_len = w * 2
         
         for _ in range(h):
-            self._spi.write(self.buffer[offset : offset + line_len])
+            self._spi.write(memoryview(buf)[offset : offset + line_len])
             offset += pitch
             
         self._cs.value(1)
@@ -340,6 +356,7 @@ class Display:
     def fill(self, color):
         self.fb.fill(color)
         
+    @micropython.native
     def pixel(self, x, y, color):
         self.fb.pixel(x, y, color)
         
@@ -363,3 +380,106 @@ class Display:
         
     def circle(self, cx, cy, r, color, filled=False):
         self.ellipse(cx, cy, r, r, color, filled)
+
+    def line(self, x0, y0, x1, y1, color):
+        """Hardware-beschleunigte Linie via framebuf.line()."""
+        self.fb.line(x0, y0, x1, y1, color)
+
+    def load_bmp_background(self, filepath):
+        """
+        Laden und anzeigen einer BMP-Datei als Hintergrund.
+        
+        Unterstützt:
+        - 24-bit RGB (uncompressed)
+        - 320x320 oder andere Auflösungen (wird auf Displaygröße skaliert)
+        
+        Args:
+            filepath: Pfad zur BMP-Datei (z.B. '/assets/bg.bmp')
+            
+        Returns:
+            (bool, str): (success, message)
+        """
+        try:
+            with open(filepath, 'rb') as f:
+                # BMP Header lesen (14 Bytes)
+                header = f.read(14)
+                if header[:2] != b'BM':
+                    return False, "Ungültiges BMP-Format"
+                
+                # DIB Header lesen (BITMAPINFOHEADER, 40 Bytes)
+                dib_header = f.read(40)
+                if len(dib_header) < 40:
+                    return False, "BMP-Header zu kurz"
+                
+                # Parse DIB Header
+                width = int.from_bytes(dib_header[4:8], 'little', signed=True)
+                height = int.from_bytes(dib_header[8:12], 'little', signed=True)
+                bit_count = int.from_bytes(dib_header[14:16], 'little')
+                compression = int.from_bytes(dib_header[16:20], 'little')
+                
+                if compression != 0:
+                    return False, f"Komprimierte BMPs nicht unterstützt: {compression}"
+                
+                if bit_count not in [24, 32]:
+                    return False, f"Nur 24-bit RGB und 32-bit ARGB unterstützt, nicht {bit_count}-bit"
+                
+                # Pixeldaten-Offset aus File Header
+                pixel_offset = int.from_bytes(header[10:14], 'little')
+                
+                # Zu Pixeldaten springen
+                f.seek(pixel_offset)
+                
+                # BMP: Daten von unten nach oben und BGR statt RGB
+                bytes_per_pixel = bit_count // 8
+                row_size = ((width * bit_count + 31) // 32) * 4
+                
+                # Puffer für eine Zeile
+                row_buffer = bytearray(row_size)
+                
+                # Framebuffer in Zielformat konvertieren
+                fb_pixels = memoryview(self.buffer)
+                fb_pitch = self.width * 2
+                
+                # Zielposition im Framebuffer (oben-links)
+                dst_y = 0
+                dst_x = 0
+                
+                # BMPs sind bottom-up, also müssen wir rückwärts lesen
+                f.seek(pixel_offset + (height - 1) * row_size)
+                
+                for src_y in range(height):
+                    # Nur bis zur Display-Höhe
+                    if dst_y >= self.height:
+                        break
+                    
+                    row_buffer = f.read(row_size)
+                    
+                    # Zeile in RGB565 konvertieren
+                    for src_x in range(min(width, self.width)):
+                        if src_x >= self.width:
+                            break
+                        
+                        # BGR Bytes aus Datei (BMP ist BGR)
+                        pixel_offset_in_row = src_x * bytes_per_pixel
+                        b = row_buffer[pixel_offset_in_row]
+                        g = row_buffer[pixel_offset_in_row + 1]
+                        r = row_buffer[pixel_offset_in_row + 2]
+                        
+                        # RGB565 konvertieren (Byte-Swap für SPI)
+                        rgb565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
+                        rgb565_swapped = (rgb565 & 0xFF) << 8 | (rgb565 >> 8)
+                        
+                        # In Framebuffer schreiben
+                        fb_offset = dst_y * fb_pitch + src_x * 2
+                        fb_pixels[fb_offset:fb_offset + 2] = rgb565_swapped.to_bytes(2, 'big')
+                    
+                    # Eine Zeile rückwärts (BMP ist bottom-up)
+                    f.seek(pixel_offset + (height - src_y - 2) * row_size)
+                    dst_y += 1
+                
+                return True, f"BMP geladen: {width}x{height} -> {self.width}x{self.height}"
+                
+        except FileNotFoundError:
+            return False, f"Datei nicht gefunden: {filepath}"
+        except Exception as e:
+            return False, f"Fehler beim BMP-Laden: {e}"

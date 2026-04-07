@@ -1,151 +1,168 @@
 # Pin-Belegung — Waveshare ESP32-S3-LCD-1.85
 
-> **Hinweis:** Diese Pins sind intern verschaltet. Externe I2C/UART-Pins sind begrenzt verfügbar.
+> **Verifiziert** gegen offizielle Waveshare Wiki + funktionierenden Code.
+> Letzte Aktualisierung: 2026-04-02
 
 ---
 
-## Display (ST7701 — SPI)
+## Display (ST77916 — QSPI, 4 Datenleitungen)
 
-| Funktion | GPIO | Richtung | Beschreibung |
-|----------|------|----------|-------------|
-| LCD_CS   | 12   | OUT | Chip-Select (aktiv LOW) |
-| LCD_CLK  | 13   | OUT | SPI Clock |
-| LCD_MOSI | 11   | OUT | SPI Data (MOSI) |
-| LCD_DC   | 4    | OUT | Data/Command (H=Data, L=Command) |
-| LCD_RST  | 5    | OUT | Reset (aktiv LOW) |
-| LCD_BL   | 38   | OUT | Backlight (PWM-fähig) |
+| Signal   | GPIO   | Richtung | Beschreibung |
+|----------|--------|----------|--------------|
+| LCD_SDA0 | GPIO46 | OUT      | QSPI Datenleitung 0 (MOSI) |
+| LCD_SDA1 | GPIO45 | OUT      | QSPI Datenleitung 1 |
+| LCD_SDA2 | GPIO42 | OUT      | QSPI Datenleitung 2 |
+| LCD_SDA3 | GPIO41 | OUT      | QSPI Datenleitung 3 |
+| LCD_SCK  | GPIO40 | OUT      | QSPI Clock |
+| LCD_CS   | GPIO21 | OUT      | Chip Select (aktiv LOW) |
+| LCD_BL   | GPIO5  | OUT      | Backlight (PWM-fähig) |
+| LCD_RST  | EXIO2  | OUT      | Reset via TCA9554 GPIO-Expander! |
+| LCD_TE   | GPIO18 | IN       | Tearing Effect Signal |
 
----
-
-## IMU: QMI8658 (I2C)
-
-| Funktion | GPIO | Adresse |
-|----------|------|---------|
-| SDA      | 6    | 0x6B    |
-| SCL      | 7    | —       |
-| INT1     | 8    | —       |
+> **Wichtig:** Obwohl das Board ein QSPI-Interface hat, nutzen wir im MicroPython-Treiber
+> den 1-wire SPI Modus (nur D0/SDA0 als MOSI). Das QSPI-Kommandoformat (0x02 Prefix)
+> wird beibehalten, aber Daten werden seriell über D0 übertragen.
 
 ---
 
-## RTC: PCF85063 (I2C — same bus)
+## I2C Bus 0 (IMU + RTC + TCA9554)
 
-| Funktion | GPIO | Adresse |
-|----------|------|---------|
-| SDA      | 6    | 0x51    |
-| SCL      | 7    | —       |
+| Funktion | GPIO   | Beschreibung |
+|----------|--------|--------------|
+| I2C_SDA  | GPIO11 | I2C Data     |
+| I2C_SCL  | GPIO10 | I2C Clock    |
 
----
+### Geräte auf I2C Bus 0
 
-## GPIO-Expander: TCA9554 (I2C)
-
-| Funktion | GPIO | Adresse |
-|----------|------|---------|
-| SDA      | 6    | 0x20    |
-| SCL      | 7    | —       |
-
----
-
-## TF-Karte / MicroSD (SPI — shared bus)
-
-| Funktion | GPIO | Beschreibung |
-|----------|------|-------------|
-| SD_CS    | 15   | Chip-Select |
-| SD_CLK   | 13   | SPI Clock (shared mit LCD) |
-| SD_MOSI  | 11   | MOSI (shared mit LCD) |
-| SD_MISO  | 14   | MISO |
+| Chip       | Adresse | Funktion |
+|------------|---------|----------|
+| TCA9554PWR | 0x20    | GPIO-Expander (EXIO0..EXIO7) |
+| QMI8658    | 0x6B    | 6-Achsen IMU (Accel + Gyro) |
+| PCF85063   | 0x51    | Echtzeituhr (RTC) |
 
 ---
 
-## Audio: PCM5101 DAC (I2S Output)
+## GPIO-Expander TCA9554 (I2C 0x20)
 
-| Funktion | GPIO | Beschreibung |
-|----------|------|-------------|
-| BCLK     | 17   | Bit Clock |
-| LRCLK/WS | 18   | Left/Right Clock |
-| DOUT     | 16   | Data Out |
+| EXIO-Pin | Bit | Funktion |
+|----------|-----|----------|
+| EXIO0    | 0   | (Reserviert) |
+| EXIO1    | 1   | Audio PA Enable (Verstärker) |
+| EXIO2    | 2   | LCD_RST (Display Reset) |
+| EXIO3    | 3   | SD_CS (TF-Card Chip Select) |
+| EXIO4    | 4   | IMU_INT2 |
+| EXIO5    | 5   | IMU_INT1 |
+
+> **Kritisch:** Ohne Initialisierung des TCA9554 bleibt das Display im
+> Reset-Zustand (EXIO2 LOW) → schwarzer Bildschirm!
+
+---
+
+## Touch: CST816S (I2C Bus 1 — separater Bus!)
+
+| Funktion  | GPIO  | Beschreibung |
+|-----------|-------|--------------|
+| TOUCH_SDA | GPIO1 | I2C Data (separater Bus!) |
+| TOUCH_SCL | GPIO3 | I2C Clock (separater Bus!) |
+| TOUCH_INT | GPIO4 | Interrupt (aktiv LOW) |
+| TOUCH_RST | EXIO0 | Reset via TCA9554 |
+
+> **Achtung:** Der Touch-Controller nutzt einen **eigenen I2C-Bus** (Bus 1),
+> nicht den gleichen wie IMU/RTC. I2C-Adresse: 0x15
+
+---
+
+## IMU: QMI8658 (I2C Bus 0)
+
+| Funktion | GPIO/Addr | Beschreibung |
+|----------|-----------|--------------|
+| SDA      | GPIO11    | Shared I2C Bus |
+| SCL      | GPIO10    | Shared I2C Bus |
+| Adresse  | 0x6B      | (CS=High) |
+| INT1     | EXIO5     | Interrupt 1 via TCA9554 |
+| INT2     | EXIO4     | Interrupt 2 via TCA9554 |
+
+---
+
+## RTC: PCF85063 (I2C Bus 0)
+
+| Funktion | GPIO/Addr | Beschreibung |
+|----------|-----------|--------------|
+| SDA      | GPIO11    | Shared I2C Bus |
+| SCL      | GPIO10    | Shared I2C Bus |
+| Adresse  | 0x51      | |
+| INT      | GPIO9     | Alarm Interrupt |
+
+---
+
+## Audio: PCM5101 DAC (I2S)
+
+| Signal    | GPIO   | Beschreibung |
+|-----------|--------|--------------|
+| SPEAK_BCK | GPIO48 | I2S Bit Clock |
+| SPEAK_LRCK| GPIO38 | I2S Word Select / LR Clock |
+| SPEAK_DIN | GPIO47 | I2S Data In (zum DAC) |
+
+> **Verstärker:** Wird über TCA9554 EXIO1 aktiviert (HIGH = ein).
 
 ---
 
 ## Mikrofon (I2S Input)
 
-| Funktion | GPIO | Beschreibung |
-|----------|------|-------------|
-| MIC_BCLK | 39   | Bit Clock |
-| MIC_WS   | 40   | Word Select |
-| MIC_DATA | 41   | Data In |
+| Signal  | GPIO   | Beschreibung |
+|---------|--------|--------------|
+| MIC_WS  | GPIO2  | Word Select |
+| MIC_SCK | GPIO15 | Bit Clock |
+| MIC_SD  | GPIO39 | Data |
+
+---
+
+## TF-Karte / MicroSD (SPI)
+
+| Signal  | GPIO  | Beschreibung |
+|---------|-------|--------------|
+| SD_MISO | GPIO16| SD Data Out |
+| SD_MOSI | GPIO17| SD Data In / CMD |
+| SD_SCK  | GPIO14| SPI Clock |
+| SD_CS   | EXIO3 | Chip Select via TCA9554 |
 
 ---
 
 ## Buttons
 
-| Funktion | GPIO | Beschreibung |
-|----------|------|-------------|
-| BOOT     | 0    | Boot-Mode / User-Button |
-| POWER    | 21   | Power-Key Input |
-| VOL      | 10   | Lautstärke |
+| Funktion | GPIO  | Beschreibung |
+|----------|-------|--------------|
+| BOOT     | GPIO0 | Boot-Mode / User-Button (aktiv LOW) |
 
 ---
 
-## I2C Bus (extern nutzbar)
-
-| Funktion | GPIO |
-|----------|------|
-| SDA      | 6    |
-| SCL      | 7    |
-
-> **Achtung:** Dieser I2C-Bus ist mit internen Chips (QMI8658, PCF85063, TCA9554) geteilt.
-> Externe Geräte müssen unterschiedliche I2C-Adressen haben.
-
----
-
-## UART (extern)
-
-| Funktion | GPIO |
-|----------|------|
-| TX       | 43   |
-| RX       | 44   |
-
-> **Achtung:** Nur verfügbar wenn der UART-USB-Port nicht genutzt wird.
-
----
-
-## config.py-Konstanten
+## config.py Referenz
 
 ```python
-# src/config.py — Hardware Pin-Definitionen
-# Display
-LCD_CS   = 12
-LCD_CLK  = 13
-LCD_MOSI = 11
-LCD_MISO = 14
-LCD_DC   = 4
-LCD_RST  = 5
-LCD_BL   = 38
+# Display (QSPI)
+LCD_SDA0 = 46; LCD_SDA1 = 45; LCD_SDA2 = 42; LCD_SDA3 = 41
+LCD_SCK = 40; LCD_CS = 21; LCD_BL = 5
+LCD_W = 360; LCD_H = 360
 
-# I2C (IMU + RTC + GPIO-Expander)
-I2C_SDA  = 6
-I2C_SCL  = 7
-IMU_INT  = 8
+# I2C Bus 0
+I2C_SCL = 10; I2C_SDA = 11
 
-# TF-Card
-SD_CS    = 15
+# TCA9554 GPIO-Expander
+TCA9554_ADDR = 0x20
+EXIO0 = 0; EXIO1 = 1; EXIO2 = 2; EXIO3 = 3; EXIO4 = 4; EXIO5 = 5
 
-# Audio DAC
-I2S_BCLK = 17
-I2S_WS   = 18
-I2S_DOUT = 16
+# Touch (separater I2C Bus 1!)
+TOUCH_SCL = 3; TOUCH_SDA = 1; TOUCH_INT = 4
 
-# Mikrofon
-MIC_BCLK = 39
-MIC_WS   = 40
-MIC_DATA = 41
+# Audio I2S
+SPEAK_DIN = 47; SPEAK_LRCK = 38; SPEAK_BCK = 48
 
-# Buttons
-BOOT_BTN  = 0
-POWER_BTN = 21
+# Mikrofon I2S
+MIC_WS = 2; MIC_SCK = 15; MIC_SD = 39
 
-# I2C Adressen
-QMI8658_ADDR = 0x6B
-PCF85063_ADDR = 0x51
-TCA9554_ADDR  = 0x20
+# SD-Karte
+SD_MISO = 16; SD_MOSI = 17; SD_SCK = 14
+
+# Sensor-Adressen
+IMU_ADDR = 0x6B; RTC_ADDR = 0x51
 ```
